@@ -3,7 +3,7 @@ Contributors: html5maps
 Donate link: https://www.fla-shop.com/
 Tags: SVG, sanitize, upload, svg support, svg upload
 Requires at least: 5.7
-Tested up to: 6.6
+Tested up to: 6.9
 Stable tag: 1.0.3
 Requires PHP: 7.1
 License: GPLv2 or later
