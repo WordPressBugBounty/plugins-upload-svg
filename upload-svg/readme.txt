@@ -3,8 +3,8 @@ Contributors: html5maps
 Donate link: https://www.fla-shop.com/
 Tags: SVG, sanitize, upload, svg support, svg upload
 Requires at least: 5.7
-Tested up to: 6.9
-Stable tag: 1.0.3
+Tested up to: 7.1
+Stable tag: 1.0.5
 Requires PHP: 7.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -49,6 +49,13 @@ Absolutely! Upload SVG allows you to restrict SVG uploads to trusted user roles,
 
 
 == Changelog ==
+
+= 1.0.5 =
+* Improved compatibility with current PHP and WordPress versions.
+* Updated local file handling and plugin identifiers.
+
+= 1.0.4 =
+* Updated plugin branding and icon.
 
 = 1.0.3 =
 * Minor fixes.

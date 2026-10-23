@@ -6,15 +6,13 @@ if( ! defined( 'ABSPATH' ) ){
 	exit;
 }
 
-class WP_SVG_Upload {
+class SVGUPL_Upload {
 
 		private $current_role     = '';
 		private $user_upload_mode = '';
+		private $sanitizer;
 		
 		function __construct(){
-			
-			// Lanuage init
-			add_action( 'init', array( $this, 'language_init' ) );
 			
 			// Checking site params. Otherwise, we stop further execution
 			if( ! $this->check_version_php() || ! $this->check_version_wp() ){
@@ -52,23 +50,20 @@ class WP_SVG_Upload {
 		/*
 		**
 		 *
-		 * Clear POST data
+		 * Sanitize a submitted settings value.
 		 *
+		 * @param string $key       Form field name.
+		 * @param array  $post_data Unslashed form data, verified by a nonce.
+		 * @return string
 		 */
 		 
-		public function valid_clear_post( $str ) {
-			
-			if( array_key_exists( $str, $_POST ) )
-			{
-				// Sanitize
-				$str = sanitize_text_field( $_POST[ $str ] );
-				
-				return str_replace( "'", "", $str );
-			}
-			else
-			{
+		private function sanitize_form_value( $key, $post_data ) {
+			if( ! isset( $post_data[ $key ] ) || ! is_scalar( $post_data[ $key ] ) ) {
 				return '';
 			}
+
+			$value = sanitize_text_field( (string) $post_data[ $key ] );
+			return str_replace( "'", '', $value );
 		}
 		
 		/*
@@ -90,16 +85,6 @@ class WP_SVG_Upload {
 		public function current_user_role(){
 			$user_roles = wp_get_current_user()->roles;
 			$this->current_role = array_shift( $user_roles );
-		}
-		
-		/*
-		**
-		 *  Loading language
-		 *
-		 */
-		 
-		public function language_init(){
-			load_plugin_textdomain( 'upload-svg', false, SVGUPL_PLUGIN_NAME . '/languages/' );
 		}
 		
 		/*
@@ -130,8 +115,9 @@ class WP_SVG_Upload {
 		 */
 		
 		private function check_version_wp(){
+			global $wp_version;
 			
-			if( version_compare( PHP_VERSION, SVGUPL_WP_MIN_VERSION, '<' ) ){
+			if( version_compare( $wp_version, SVGUPL_WP_MIN_VERSION, '<' ) ){
 				$this->view_notice( 
 					'notice-error', 
 					'<b>' . SVGUPL_PLUGIN_NAME . ':</b> ' . __( 'Minimum required WP version ( or later ) ', 'upload-svg' ) . SVGUPL_WP_MIN_VERSION
@@ -217,7 +203,7 @@ class WP_SVG_Upload {
 		{
 			if( ! current_user_can('administrator') ){
 				
-				return;
+				return $links;
 			}
 			
 			array_unshift( 
@@ -245,17 +231,23 @@ class WP_SVG_Upload {
 			$params     = get_option( SVGUPL_PLUGIN_SHORT_NAME . '_params' );
 			$file_limit = get_option( SVGUPL_PLUGIN_SHORT_NAME . '_file_limit' );
 
-			// Processing the data of the submitted form
-			if( $this->valid_clear_post('save_params') == 1 ){
-				
-				if( wp_verify_nonce( $this->valid_clear_post('params_nonce'), 'save_current_config' ) ){
+			$request_method = isset( $_SERVER['REQUEST_METHOD'] )
+				? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) )
+				: '';
+
+			// Process form data only after verifying the request nonce.
+			if( 'POST' === $request_method ) {
+				check_admin_referer( 'save_current_config', 'params_nonce' );
+				$post_data = wp_unslash( $_POST );
+
+				if( '1' === $this->sanitize_form_value( 'save_params', $post_data ) ) {
 					
 					$params = array();
 					foreach( $user_roles as $role_slug ){
 						
 						if( ! empty( $role_slug ) ){
 							
-							$post_value = $this->valid_clear_post( 'role_' . $role_slug );
+							$post_value = $this->sanitize_form_value( 'role_' . $role_slug, $post_data );
 							
 							if( ! empty($post_value) ){
 								
@@ -270,9 +262,10 @@ class WP_SVG_Upload {
 					// File limit
 					$file_limit = 0;
 					
-					if( $this->valid_clear_post('file_limit') > 0 ) {
+					$submitted_file_limit = $this->sanitize_form_value( 'file_limit', $post_data );
+					if( (int) $submitted_file_limit > 0 ) {
 						
-						$file_limit = $this->valid_clear_post('file_limit');
+						$file_limit = (int) $submitted_file_limit;
 					}
 					
 					// Save
@@ -281,14 +274,6 @@ class WP_SVG_Upload {
 					$this->view_notice( 
 						'notice-success', 
 						__( 'The changes were saved successfully.', 'upload-svg' )
-					);
-				}
-				else 
-				{
-					// Form submission error
-					$this->view_notice( 
-						'notice-error', 
-						__( 'Form submission error. Repeat the request or contact the developer.', 'upload-svg' )
 					);
 				}
 			}
@@ -549,7 +534,8 @@ class WP_SVG_Upload {
 						if( $file_limit < $filesize_kb ){
 							
 							$file['error'] = sprintf( 
-								__( ' Sorry, the allowed file size has been exceeded. Allowed size: %s Kb', 'upload-svg' ), 
+								/* translators: %s: Maximum allowed SVG file size in kilobytes. */
+								__( 'Sorry, the allowed file size has been exceeded. Allowed size: %s KB', 'upload-svg' ), 
 								$file_limit 
 							);
 						}
@@ -565,8 +551,15 @@ class WP_SVG_Upload {
 					}
 					
 					if( $this->user_upload_mode === 'sanitized' && empty( $file[ 'error' ] ) ){
-						
-						if( ! $this->action_sanitize( $file['tmp_name'] ) ){
+						$sanitized = false;
+
+						try {
+							$sanitized = $this->action_sanitize( $file['tmp_name'] );
+						} catch( \Throwable $exception ) {
+							$sanitized = false;
+						}
+
+						if( ! $sanitized ){
 							
 							$file[ 'error' ] = __(
 								'Could not sanitize this SVG file!',
@@ -589,10 +582,20 @@ class WP_SVG_Upload {
 		 */
 		
 		public function svg_sizes( $file_path ){
-			
-			$svg    = simplexml_load_file( $file_path );
+			$svg    = false;
 			$width  = 0;
 			$height = 0;
+
+			$libxml_error_state = libxml_use_internal_errors( true );
+
+			try {
+				$svg = simplexml_load_file( $file_path, 'SimpleXMLElement', LIBXML_NONET );
+			} catch( \Throwable $exception ) {
+				$svg = false;
+			}
+
+			libxml_clear_errors();
+			libxml_use_internal_errors( $libxml_error_state );
 			
 			if( $svg ){
 				
@@ -601,11 +604,11 @@ class WP_SVG_Upload {
 				// Data from size
 				if( isset( $attributes->width, $attributes->height ) ){
 					
-					if( substr( trim( $attributes->width ), -1 ) != '%' ){
+					if( substr( trim( (string) $attributes->width ), -1 ) != '%' ){
 						
 						$width = floatval( $attributes->width );
 					}
-					if( substr( trim( $attributes->height ), -1 ) != '%' ){
+					if( substr( trim( (string) $attributes->height ), -1 ) != '%' ){
 						
 						$height = floatval( $attributes->height );
 					}
@@ -614,7 +617,7 @@ class WP_SVG_Upload {
 				// Data from viewBox
 				if( ( ! $width || ! $height ) && isset( $attributes->viewBox ) ){
 					
-					$sizes = explode( ' ', $attributes->viewBox );
+					$sizes = preg_split( '/[\s,]+/', trim( (string) $attributes->viewBox ) );
 					
 					if( isset( $sizes[2], $sizes[3] ) ){
 						
@@ -646,12 +649,14 @@ class WP_SVG_Upload {
 			
 			if( 'image/svg+xml' === $mime ){
 				
-				$svg_path               = get_attached_file( $attachment_id );
-				$upload_dir             = wp_upload_dir();
+				$svg_path   = get_attached_file( $attachment_id );
+				$upload_dir = wp_upload_dir();
+
+				if( ! $svg_path || ! file_exists( $svg_path ) ) {
+					return $metadata;
+				}
 				
 				$relative_path = str_replace( trailingslashit( $upload_dir[ 'basedir' ] ), '', $svg_path );
-				$filename      = basename( $svg_path );
-
 				$svg_sizes = $this->svg_sizes( $svg_path );
 
 				if( ! $svg_sizes ){
@@ -675,14 +680,23 @@ class WP_SVG_Upload {
 		**
 		 *   Clearing data
 		 *
-		 *   @param string $file_url 
+		 *   @param string $file_path
 		 *
 		 *   @return bool
 		 */
 		
-		protected function action_sanitize( $file_url ){
-						
-			$data = file_get_contents( $file_url );
+		protected function action_sanitize( $file_path ){
+			if( ! class_exists( 'WP_Filesystem_Direct' ) ) {
+				require_once ABSPATH . 'wp-admin/includes/class-wp-filesystem-base.php';
+				require_once ABSPATH . 'wp-admin/includes/class-wp-filesystem-direct.php';
+			}
+
+			$filesystem = new WP_Filesystem_Direct( null );
+			$data       = $filesystem->get_contents( $file_path );
+
+			if( false === $data ) {
+				return false;
+			}
 			
 			$is_zipped = $this->is_gzipped( $data );
 			if( $is_zipped ){
@@ -711,10 +725,13 @@ class WP_SVG_Upload {
 				$clean = gzencode( $clean );
 			}
 			
-			// Save cleaned file
-			file_put_contents( $file_url, $clean );
+			$file_mode = octdec( $filesystem->getchmod( $file_path ) );
+			if( ! $file_mode ) {
+				$file_mode = 0644;
+			}
 
-			return true;
+			// Save cleaned file and preserve permissions of the uploaded temp file.
+			return $filesystem->put_contents( $file_path, $clean, $file_mode );
 		}
 		
 		/*
